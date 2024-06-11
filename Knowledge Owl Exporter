@@ -1,0 +1,196 @@
+const fs = require('fs');
+const https = require('https');
+const path = require('path'); ','
+const dirPath = 'data';
+const apiUrl = 'https://app.knowledgeowl.com/api/head/file.json';
+
+var pageCount = 1;
+var maxPages = 1;//WARNING! If you're having issues with whats downloading, check this!
+
+function CheckRequisites() {
+  ///IMPORTANT////
+  //This must run before everything. This will check/create folder and files
+
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath);
+    fs.writeFileSync(path.join(dirPath, 'apiKey.txt'), '');
+    fs.writeFileSync(path.join(dirPath, 'exportPath.txt'), '');
+    fs.writeFileSync(path.join(dirPath, 'password.txt'), '');
+    fs.writeFileSync(path.join(dirPath, 'projectID.txt'), '');
+    throw 'Directory was created successfully. Please enter values into the /data files.';
+  }
+
+  //Enter the correct values into each of the files in your Data folder
+  const projectID = fs.readFileSync('data/projectID.txt', 'utf8');
+  const apiKey = fs.readFileSync('data/apiKey.txt', 'utf8');
+  const password = fs.readFileSync('data/password.txt', 'utf8');
+  const folderPath = fs.readFileSync('data/exportPath.txt', 'utf8');
+
+  if (projectID == null || apiKey == null || password == null || folderPath == null) {
+    throw "Check the files in your /data folder have been filled in.";
+  }
+
+  //api headers
+  const requestOptions = {
+    method: 'GET',
+    headers: {//constructs token
+      'Authorization': `Basic ${btoa(`${apiKey}:${password}`)}`,
+    },
+  };
+  return [requestOptions, projectID];
+}
+
+//checks the data.json file exists and if not creates it.
+function CheckForFile() {
+  if (!fs.existsSync('data.json')) {
+    fs.writeFileSync('data.json', ''); // Create an empty file
+  }
+}
+
+//Function creates an api url then sends a fetch request to the server using the 
+//credentials set in you /data folder. It querys the database for the files and
+//exports the .json response to file. (OPTIONAL) Uncommenting the DownloadFiles()
+//call, you can download all the files located at the endpoint with the given filters
+function CallAPI(reqOptions, ID) {
+  return new Promise((resolve, reject) => {
+    CheckForFile();
+    //constructed api call URL. adjust this to change the filtering on the files
+    const requestURL = apiUrl + "?project_id=" + ID + "&page=" + String(pageCount) + "&status=active";
+
+    fetch(requestURL, reqOptions)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        return response.json();
+      })
+      .then(data => {
+        if (data.valid && Array.isArray(data.data))
+          fs.appendFile('data.json', JSON.stringify(data, null, 2), (err) => {
+            if (err) throw err;
+            console.log('Data has been saved to data.json');
+          });
+        maxPages = data.page_stats.total_pages;
+
+        data.data.forEach(obj => {
+          const fileURL = `https:${obj.url}`;
+          const fileName = obj.name;
+          const contentType = obj.contentType;
+
+          //uncomment bellow call to download the files
+          //DownloadFiles(fileURL, fileName, contentType);
+        })
+        //simple debug to show that functions are happenning
+        console.log("Page " + pageCount + " completed");
+        resolve();
+      })
+  });
+}
+
+//this function will folow the path outlined in your data/exportPath.txt file
+//and export all files captured during the query to that folder and name them
+//with the name and file extension given from the CallAPI() function
+function DownloadFiles(url, fileName, contentType) {
+  const NEW_fileName = fileName + ChooseFileType(contentType);
+  const filePath = path.join(folderPath, NEW_fileName);
+
+  const file = fs.createWriteStream(filePath);
+  const request = https.get(url, function (response) {
+    response.pipe(file);
+
+    // after download completed close filestream
+    file.on("finish", () => {
+      file.close();
+      console.log("Download Completed");
+    });
+  });
+}
+
+//using the ContentType value from the file on the server, this function
+//choses what the extension of the file should be and then passes that back
+//to the CallAPI() function for it to pass onto the DownloadFiles() function
+
+//NOTE - There are possibly more file types but this is the only ones I encountered.
+//You can add more here if you need to.
+function ChooseFileType(contentType) {
+  let fileExtension = '.unknown'; // Default to .unknown if contentType is not recognized
+  if (contentType) {
+    switch (contentType) {
+
+      case 'application/x-font-woff':
+        fileExtension = '.woff';
+        break;
+
+      case 'application/octet-stream':
+        fileExtension = '.otf';
+        break;
+
+      case 'image/jpeg':
+        fileExtension = '.jpg';
+        break;
+
+      case 'image/png':
+        fileExtension = '.png';
+        break;
+
+      case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+        fileExtension = '.docx';
+        break;
+
+      case 'application/pdf':
+        fileExtension = '.pdf';
+        break;
+
+      case 'text/plain':
+        fileExtension = '.txt';
+        break;
+      case 'video/mp4':
+        fileExtension = '.mp4';
+        break;
+
+      case 'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+        fileExtension = '.pptx';
+        break;
+
+      case 'audio/mpeg':
+        fileExtension = '.mp3';
+        break;
+
+      case 'image/gif':
+        fileExtension = '.gif';
+        break;
+
+      case 'image/svg+xml':
+        fileExtension = '.svg';
+        break;
+
+      case 'text/css':
+        fileExtension = '.css';
+        break;
+
+      default:
+        // Handle unrecognized content types
+        console.warn(`Unrecognized contentType: ${contentType}. Using .unknown extension.`);
+        break;
+    }
+  }
+  return fileExtension;
+}
+
+//Calls the CallAPI() function to start and loops it for he number of pages listen
+//from the server, defined in the CallAPI() function.
+async function StartAPI(a, b) {
+  while (pageCount != maxPages + 1) {
+    const waitforapi = await CallAPI(a, b);
+    pageCount++;
+  }
+}
+
+//The Beginning
+try {
+  const [a, b] = CheckRequisites();
+  StartAPI(a, b);
+}
+catch (error) {
+  console.log(error);
+}
